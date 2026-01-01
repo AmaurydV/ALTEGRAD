@@ -38,6 +38,37 @@ def contrastive_loss(graph_emb, text_emb, temperature=0.07):
     labels = torch.arange(len(graph_emb), device=graph_emb.device)
     return F.cross_entropy(logits, labels)
 
+import torch
+import torch.nn.functional as F
+
+def multi_positive_contrastive_loss(
+    graph_emb, text_emb, temperature=0.07, sim_threshold=0.8
+):
+    """
+    graph_emb: [B, D] (normalisé)
+    text_emb:  [B, D] (normalisé, BERT)
+    """
+
+    # Similarité graphe ↔ texte
+    logits = graph_emb @ text_emb.T / temperature   # [B, B]
+
+    # Similarité texte ↔ texte (pour définir les positifs)
+    with torch.no_grad():
+        text_sim = text_emb @ text_emb.T             # cos sim
+        pos_mask = (text_sim >= sim_threshold).float()
+
+        # on force la diagonale à 1
+        pos_mask.fill_diagonal_(1.0)
+
+    # log-softmax sur les textes
+    log_probs = F.log_softmax(logits, dim=1)
+
+    # somme des log-probs sur les positifs
+    loss_per_sample = -(pos_mask * log_probs).sum(dim=1) / pos_mask.sum(dim=1)
+
+    return loss_per_sample.mean()
+
+
 # =========================================================
 # MODEL: GNN to encode graphs (simple GCN, no edge features)
 # =========================================================
@@ -124,8 +155,11 @@ def train_epoch(mol_enc, loader, optimizer, device):
         mol_vec = mol_enc(graphs)
         txt_vec = F.normalize(text_emb, dim=-1)
 
-        loss = contrastive_loss(mol_vec, txt_vec)
-
+        loss = multi_positive_contrastive_loss(
+                                mol_vec, txt_vec,
+                                temperature=0.07,
+                                sim_threshold=0.8
+                            )
 
         optimizer.zero_grad()
         loss.backward()
