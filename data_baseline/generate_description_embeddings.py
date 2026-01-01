@@ -105,7 +105,7 @@ for split in ['train', 'validation']:
     for graph in tqdm(graphs, total=len(graphs)):
         # Get description from graph
         description = graph.description
-        description = filter_boring(description)
+        # description = filter_boring(description)
         
         # Tokenize
         inputs = tokenizer(description, return_tensors='pt', 
