@@ -193,7 +193,7 @@ def train_epoch(mol_enc, loader, optimizer, device):
         mol_vec = mol_enc(graphs)
         txt_vec = F.normalize(text_emb, dim=-1)
 
-        loss = weak_multi_positive_loss(
+        loss = contrastive_loss(
                                 mol_vec, txt_vec,
                                 
                             )
