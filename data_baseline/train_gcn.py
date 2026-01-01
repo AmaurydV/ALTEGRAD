@@ -18,7 +18,7 @@ from data_utils import (
 # CONFIG
 # =========================================================
 # Data paths
-TRAIN_GRAPHS =  
+TRAIN_GRAPHS =  "/content/drive/MyDrive/ALTEGRAD/data/train_graphs.pkl"
 VAL_GRAPHS   = "/content/drive/MyDrive/ALTEGRAD/data/validation_graphs.pkl"
 TEST_GRAPHS  = "/content/drive/MyDrive/ALTEGRAD/data/test_graphs.pkl"
 
@@ -42,30 +42,52 @@ def contrastive_loss(graph_emb, text_emb, temperature=0.07):
 # MODEL: GNN to encode graphs (simple GCN, no edge features)
 # =========================================================
 class MolGNN(nn.Module):
-    def __init__(self, hidden=128, out_dim=256, layers=3):
+    def __init__(self, hidden=64, out_dim=768, layers=3):
         super().__init__()
 
-        # Use a single learnable embedding for all nodes (no node features)
-        self.node_init = nn.Parameter(torch.randn(hidden))
+        # === Embeddings atomiques (1 par feature) ===
+        self.embeddings = nn.ModuleList([
+            nn.Embedding(119, hidden),  # atomic_num (0–118)
+            nn.Embedding(4, hidden),    # chirality
+            nn.Embedding(11, hidden),   # degree (0–10)
+            nn.Embedding(12, hidden),   # formal_charge (-5 → +6)
+            nn.Embedding(9, hidden),    # num_hs (0–8)
+            nn.Embedding(5, hidden),    # num_radical_electrons (0–4)
+            nn.Embedding(7, hidden),    # hybridization
+            nn.Embedding(2, hidden),    # is_aromatic
+            nn.Embedding(2, hidden),    # is_in_ring
+        ])
 
-        self.convs = nn.ModuleList()
-        for _ in range(layers):
-            self.convs.append(GCNConv(hidden, hidden))
+        in_dim = hidden * 9
+
+        # === GNN layers (GCN, simple et stable) ===
+        self.convs = nn.ModuleList([
+            GCNConv(in_dim if i == 0 else hidden, hidden)
+            for i in range(layers)
+        ])
 
         self.proj = nn.Linear(hidden, out_dim)
 
-    def forward(self, batch: Batch):
-        # Initialize all nodes with the same learnable embedding
-        num_nodes = batch.x.size(0)
-        h = self.node_init.unsqueeze(0).expand(num_nodes, -1)
-        
+    def forward(self, batch):
+        # batch.x : [num_nodes, 9]
+
+        # concaténation de tous les embeddings atomiques
+        xs = [
+            emb(batch.x[:, i])
+            for i, emb in enumerate(self.embeddings)
+        ]
+        h = torch.cat(xs, dim=-1)  # [num_nodes, hidden*9]
+
+        # propagation GNN
         for conv in self.convs:
-            h = conv(h, batch.edge_index)
-            h = F.relu(h)
+            h = F.relu(conv(h, batch.edge_index))
+
+        # pooling global
         g = global_add_pool(h, batch.batch)
+
+        # projection finale + normalisation
         g = self.proj(g)
-        g = F.normalize(g, dim=-1)
-        return g
+        return F.normalize(g, dim=-1)
 
 
 # =========================================================
