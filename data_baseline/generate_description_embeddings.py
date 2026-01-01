@@ -24,7 +24,7 @@ for split in ['train', 'validation']:
     print(f"\nProcessing {split}...")
     
     # Load graphs from pkl file
-    pkl_path = f'data/{split}_graphs.pkl'
+    pkl_path = f'/content/drive/MyDrive/ALTEGRAD/data/{split}_graphs.pkl'
     print(f"Loading from {pkl_path}...")
     with open(pkl_path, 'rb') as f:
         graphs = pickle.load(f)
