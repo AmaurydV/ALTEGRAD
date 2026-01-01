@@ -18,7 +18,7 @@ from data_utils import (
 # CONFIG
 # =========================================================
 # Data paths
-TRAIN_GRAPHS = "/content/drive/MyDrive/ALTEGRAD/data/train_graphs.pkl"
+TRAIN_GRAPHS =  
 VAL_GRAPHS   = "/content/drive/MyDrive/ALTEGRAD/data/validation_graphs.pkl"
 TEST_GRAPHS  = "/content/drive/MyDrive/ALTEGRAD/data/test_graphs.pkl"
 
@@ -31,6 +31,12 @@ EPOCHS = 5
 LR = 1e-3
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
+
+def contrastive_loss(graph_emb, text_emb, temperature=0.07):
+    # graph_emb, text_emb: [B, D] normalisés
+    logits = graph_emb @ text_emb.T / temperature
+    labels = torch.arange(len(graph_emb), device=graph_emb.device)
+    return F.cross_entropy(logits, labels)
 
 # =========================================================
 # MODEL: GNN to encode graphs (simple GCN, no edge features)
@@ -76,7 +82,8 @@ def train_epoch(mol_enc, loader, optimizer, device):
         mol_vec = mol_enc(graphs)
         txt_vec = F.normalize(text_emb, dim=-1)
 
-        loss = F.mse_loss(mol_vec, txt_vec)
+        loss = contrastive_loss(mol_vec, txt_vec)
+
 
         optimizer.zero_grad()
         loss.backward()
