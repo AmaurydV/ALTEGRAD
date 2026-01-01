@@ -38,6 +38,44 @@ def contrastive_loss(graph_emb, text_emb, temperature=0.07):
     labels = torch.arange(len(graph_emb), device=graph_emb.device)
     return F.cross_entropy(logits, labels)
 
+def weak_multi_positive_loss(graph_emb, text_emb, temperature=0.07, sim_threshold=0.85, alpha=0.2):
+    logits = graph_emb @ text_emb.T / temperature
+    log_probs = F.log_softmax(logits, dim=1)
+
+    with torch.no_grad():
+        text_sim = text_emb @ text_emb.T
+        pos = (text_sim >= sim_threshold).float()
+        pos.fill_diagonal_(1.0)
+
+        # poids: diagonale = 1, autres positifs = alpha
+        weights = pos * alpha
+        weights.fill_diagonal_(1.0)
+
+        # normalisation en distribution cible
+        weights = weights / weights.sum(dim=1, keepdim=True)
+
+    loss = -(weights * log_probs).sum(dim=1).mean()
+    return loss
+
+def capped_multi_positive_loss(graph_emb, text_emb, temperature=0.07, m=2):
+    logits = graph_emb @ text_emb.T / temperature
+    log_probs = F.log_softmax(logits, dim=1)
+
+    with torch.no_grad():
+        text_sim = text_emb @ text_emb.T
+        text_sim.fill_diagonal_(-1e9)
+        topm = text_sim.topk(m, dim=1).indices
+
+        pos_mask = torch.zeros_like(text_sim)
+        pos_mask.scatter_(1, topm, 1.0)
+        pos_mask.fill_diagonal_(1.0)
+
+        weights = pos_mask / pos_mask.sum(dim=1, keepdim=True)
+
+    loss = -(weights * log_probs).sum(dim=1).mean()
+    return loss
+
+
 import torch
 import torch.nn.functional as F
 
@@ -155,10 +193,9 @@ def train_epoch(mol_enc, loader, optimizer, device):
         mol_vec = mol_enc(graphs)
         txt_vec = F.normalize(text_emb, dim=-1)
 
-        loss = multi_positive_contrastive_loss(
+        loss = weak_multi_positive_loss(
                                 mol_vec, txt_vec,
-                                temperature=0.07,
-                                sim_threshold=0.8
+                                
                             )
 
         optimizer.zero_grad()
