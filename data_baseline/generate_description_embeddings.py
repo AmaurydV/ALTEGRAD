@@ -6,7 +6,75 @@ import pandas as pd
 import torch
 from transformers import AutoTokenizer, AutoModel
 from tqdm import tqdm
+BORING_PATTERNS = [
+    # provenance / dérivation
+    "it derives from",
+    "it is derived from",
+    "derived from",
+    "it originates from",
 
+    # rôles biologiques / fonctionnels vagues
+    "it has a role as",
+    "it plays a role in",
+    "it is involved in",
+    "it is used as",
+    "it functions as",
+    "it acts as",
+
+    # relations chimiques génériques
+    "it is a conjugate",
+    "it is the conjugate",
+    "conjugate base of",
+    "conjugate acid of",
+    "it is a salt of",
+    "it is a salt",
+    "it is a hydrate",
+    "it is an ester of",
+    "it is an amide of",
+    "it is an ether of",
+
+    # classification / taxonomie
+    "it is a member of",
+    "it belongs to",
+    "it is classified as",
+    "it is a type of",
+    "it is a kind of",
+
+    # métadonnées biologiques
+    "found in",
+    "isolated from",
+    "obtained from",
+    "present in",
+    "occurs in nature",
+    "naturally occurring",
+
+    # pH / conditions expérimentales (souvent verbeux)
+    "at physiological ph",
+    "at ph",
+    "major species at ph",
+
+    # redondances fréquentes
+    "it is a chemical entity",
+    "it is a molecular entity",
+    "this compound is",
+    "this molecule is"
+]
+import re
+
+def filter_boring(desc, min_len=20):
+    # découpe grossière en phrases
+    sentences = re.split(r"\.\s+", desc)
+    
+    kept = []
+    for s in sentences:
+        s_low = s.lower()
+        if any(p in s_low for p in BORING_PATTERNS):
+            continue
+        if len(s.strip()) < min_len:   # évite les phrases trop courtes
+            continue
+        kept.append(s.strip())
+
+    return ". ".join(kept)
 # Configuration
 MAX_TOKEN_LENGTH = 128
 
@@ -37,6 +105,7 @@ for split in ['train', 'validation']:
     for graph in tqdm(graphs, total=len(graphs)):
         # Get description from graph
         description = graph.description
+        description = filter_boring(description)
         
         # Tokenize
         inputs = tokenizer(description, return_tensors='pt', 
