@@ -81,9 +81,9 @@ def retrieve_descriptions(model, train_data, test_data, train_emb_dict, device, 
 def main():
     print(f"Device: {DEVICE}")
     
-    output_csv = "test_retrieved_descriptions.csv"
+    output_csv = "/content/drive/MyDrive/ALTEGRAD/test_retrieved_descriptions.csv"
     
-    model_path = "model_checkpoint.pt"
+    model_path = "/content/drive/MyDrive/ALTEGRAD/model_checkpoint.pt"
     if not os.path.exists(model_path):
         print(f"Error: Model checkpoint '{model_path}' not found.")
         print("Please train a model first using train_gcn.py")

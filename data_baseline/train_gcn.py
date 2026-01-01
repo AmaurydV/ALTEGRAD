@@ -18,12 +18,12 @@ from data_utils import (
 # CONFIG
 # =========================================================
 # Data paths
-TRAIN_GRAPHS = "data/train_graphs.pkl"
-VAL_GRAPHS   = "data/validation_graphs.pkl"
-TEST_GRAPHS  = "data/test_graphs.pkl"
+TRAIN_GRAPHS = "/content/drive/MyDrive/ALTEGRAD/data/train_graphs.pkl"
+VAL_GRAPHS   = "/content/drive/MyDrive/ALTEGRAD/data/validation_graphs.pkl"
+TEST_GRAPHS  = "/content/drive/MyDrive/ALTEGRAD/data/test_graphs.pkl"
 
-TRAIN_EMB_CSV = "data/train_embeddings.csv"
-VAL_EMB_CSV   = "data/validation_embeddings.csv"
+TRAIN_EMB_CSV = "/content/drive/MyDrive/ALTEGRAD/data/train_embeddings.csv"
+VAL_EMB_CSV   = "/content/drive/MyDrive/ALTEGRAD/data/validation_embeddings.csv"
 
 # Training parameters
 BATCH_SIZE = 32
@@ -156,7 +156,7 @@ def main():
             val_scores = {}
         print(f"Epoch {ep+1}/{EPOCHS} - loss={train_loss:.4f} - val={val_scores}")
     
-    model_path = "model_checkpoint.pt"
+    model_path = "/content/drive/MyDrive/ALTEGRAD/model_checkpoint.pt"
     torch.save(mol_enc.state_dict(), model_path)
     print(f"\nModel saved to {model_path}")
 
