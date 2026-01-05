@@ -13,6 +13,10 @@ from train_gcn import (
     MolGNN, DEVICE, TRAIN_GRAPHS, TEST_GRAPHS, TRAIN_EMB_CSV
 )
 
+def lexical_score(a, b):
+    set_a = set(a.lower().split())
+    set_b = set(b.lower().split())
+    return len(set_a & set_b)
 
 @torch.no_grad()
 def retrieve_descriptions(model, train_data, test_data, train_emb_dict, device, output_csv):
@@ -53,22 +57,38 @@ def retrieve_descriptions(model, train_data, test_data, train_emb_dict, device, 
     
     similarities = test_mol_embs @ train_embs.t()
     
-    most_similar_indices = similarities.argmax(dim=-1).cpu()
-    
+    TOP_K = 5
+    alpha = 0.05  # poids BLEU-like (à tuner)
+
     results = []
+
     for i, test_id in enumerate(test_ids_ordered):
-        train_idx = most_similar_indices[i].item()
-        retrieved_train_id = train_ids[train_idx]
-        retrieved_desc = train_id2desc[retrieved_train_id]
-        
+        sims = similarities[i]
+        topk_idx = sims.topk(TOP_K).indices.tolist()
+
+        best_score = -1e9
+        best_desc = None
+
+        for idx in topk_idx:
+            train_id = train_ids[idx]
+            desc = train_id2desc[train_id]
+
+            score = (
+                sims[idx].item()
+                + alpha * lexical_score(desc, desc)  # cheap BLEU proxy
+            )
+
+            if score > best_score:
+                best_score = score
+                best_desc = desc
+
         results.append({
-            'ID': test_id,
-            'description': retrieved_desc
+            "ID": test_id,
+            "description": best_desc
         })
+
         
-        if i < 5:
-            print(f"\nTest ID {test_id}: Retrieved from train ID {retrieved_train_id}")
-            print(f"Description: {retrieved_desc[:150]}...")
+        
     
     results_df = pd.DataFrame(results)
     results_df.to_csv(output_csv, index=False)

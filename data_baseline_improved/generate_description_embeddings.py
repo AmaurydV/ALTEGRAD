@@ -79,20 +79,27 @@ Generate Sentence-BERT embeddings for molecular descriptions.
 Replaces BERT CLS embeddings with retrieval-optimized embeddings.
 """
 
-def enrich_description(graph):
-    desc = graph.description
+def truncate(text, max_words):
+    words = text.split()
+    return " ".join(words[:max_words])
 
-    # exemples (à adapter à ce que tu as)
-    num_nodes = graph.num_nodes
-    num_edges = graph.edge_index.size(1)
+def enrich_and_truncate(graph, max_desc_words=90):
+    desc = truncate(graph.description, max_desc_words)
 
-    extra = (
-        f" [Molecule info] "
-        f"Atoms count: {num_nodes}. "
-        f"Bonds count: {num_edges}."
-    )
+    extras = []
+
+    if graph.num_nodes > 50:
+        extras.append("large molecule")
+    else:
+        extras.append("small molecule")
+
+    if graph.edge_index.size(1) / graph.num_nodes > 1.5:
+        extras.append("dense bonds")
+
+    extra = " [Molecule info] " + " ".join(extras)
 
     return desc + extra
+
 
 
 import pickle
@@ -132,7 +139,7 @@ for split in ["train", "validation"]:
     embeddings = []
 
     # Encode descriptions
-    descriptions = [enrich_description(g) for g in graphs]
+    descriptions = [enrich_and_truncate(g) for g in graphs]
 
     ids = [g.id for g in graphs]
 
