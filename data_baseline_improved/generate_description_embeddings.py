@@ -7,6 +7,12 @@ import torch
 from transformers import AutoTokenizer, AutoModel
 from tqdm import tqdm
 
+def mean_pooling(model_output, attention_mask):
+    token_embeddings = model_output.last_hidden_state
+    mask = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+    return (token_embeddings * mask).sum(1) / mask.sum(1)
+
+
 # Configuration
 MAX_TOKEN_LENGTH = 128
 
@@ -46,7 +52,10 @@ for split in ['train', 'validation']:
         # Get embedding
         with torch.no_grad():
             outputs = model(**inputs)
-        embedding = outputs.last_hidden_state[:, 0, :].cpu().numpy().flatten()
+            embedding = mean_pooling(outputs, inputs["attention_mask"])
+            embedding = torch.nn.functional.normalize(embedding, dim=-1)
+
+        embedding = embedding.cpu().numpy().flatten()
         
         ids.append(graph.id)
         embeddings.append(embedding)
