@@ -26,8 +26,8 @@ TRAIN_EMB_CSV = "/content/drive/MyDrive/ALTEGRAD/data/train_embeddings.csv"
 VAL_EMB_CSV   = "/content/drive/MyDrive/ALTEGRAD/data/validation_embeddings.csv"
 
 # Training parameters
-BATCH_SIZE = 32
-EPOCHS = 5
+BATCH_SIZE = 64
+EPOCHS = 15
 LR = 1e-3
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -39,27 +39,55 @@ class MolGNN(nn.Module):
     def __init__(self, hidden=128, out_dim=256, layers=3):
         super().__init__()
 
-        # Use a single learnable embedding for all nodes (no node features)
-        self.node_init = nn.Parameter(torch.randn(hidden))
+        emb_dim = hidden // 4  # dimension par feature
 
+        # 9 embeddings pour les 9 features atomiques
+        self.emb_atomic_num = nn.Embedding(119, emb_dim)
+        self.emb_chirality = nn.Embedding(9, emb_dim)
+        self.emb_degree = nn.Embedding(11, emb_dim)
+        self.emb_formal_charge = nn.Embedding(12, emb_dim)
+        self.emb_num_hs = nn.Embedding(9, emb_dim)
+        self.emb_num_radical = nn.Embedding(5, emb_dim)
+        self.emb_hybridization = nn.Embedding(8, emb_dim)
+        self.emb_aromatic = nn.Embedding(2, emb_dim)
+        self.emb_in_ring = nn.Embedding(2, emb_dim)
+
+        # Projection vers hidden
+        self.node_proj = nn.Linear(9 * emb_dim, hidden)
+
+        # GNN
         self.convs = nn.ModuleList()
         for _ in range(layers):
             self.convs.append(GCNConv(hidden, hidden))
 
         self.proj = nn.Linear(hidden, out_dim)
 
-    def forward(self, batch: Batch):
-        # Initialize all nodes with the same learnable embedding
-        num_nodes = batch.x.size(0)
-        h = self.node_init.unsqueeze(0).expand(num_nodes, -1)
-        
+    def forward(self, batch):
+        x = batch.x  # (N, 9)
+
+        h = torch.cat([
+            self.emb_atomic_num(x[:, 0]),
+            self.emb_chirality(x[:, 1]),
+            self.emb_degree(x[:, 2]),
+            self.emb_formal_charge(x[:, 3]),
+            self.emb_num_hs(x[:, 4]),
+            self.emb_num_radical(x[:, 5]),
+            self.emb_hybridization(x[:, 6]),
+            self.emb_aromatic(x[:, 7]),
+            self.emb_in_ring(x[:, 8]),
+        ], dim=-1)
+
+        h = self.node_proj(h)
+
         for conv in self.convs:
             h = conv(h, batch.edge_index)
             h = F.relu(h)
+
         g = global_add_pool(h, batch.batch)
         g = self.proj(g)
         g = F.normalize(g, dim=-1)
         return g
+
 
 
 # =========================================================
@@ -74,9 +102,11 @@ def train_epoch(mol_enc, loader, optimizer, device):
         text_emb = text_emb.to(device)
 
         mol_vec = mol_enc(graphs)
-        txt_vec = F.normalize(text_emb, dim=-1)
+        # mol_vec = F.normalize(mol_vec, dim=-1)
+        # txt_vec = F.normalize(text_emb, dim=-1)
 
-        loss = contrastive_loss(mol_vec, txt_vec)
+        loss = contrastive_loss(mol_vec, text_emb, temperature=0.07)
+
 
         optimizer.zero_grad()
         loss.backward()

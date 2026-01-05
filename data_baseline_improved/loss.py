@@ -21,3 +21,18 @@ def contrastive_loss(mol_vec, txt_vec, temperature=0.07):
     loss_t2m = F.cross_entropy(logits.T, labels)
 
     return (loss_m2t + loss_t2m) / 2
+
+
+
+def info_nce_loss(mol_emb, txt_emb, temperature=0.07):
+    """
+    mol_emb: (B, D) normalized
+    txt_emb: (B, D) normalized
+    """
+    logits = mol_emb @ txt_emb.t()  # (B, B)
+    logits = logits / temperature
+
+    labels = torch.arange(mol_emb.size(0), device=mol_emb.device)
+
+    loss = F.cross_entropy(logits, labels)
+    return loss
