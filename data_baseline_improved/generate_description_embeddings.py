@@ -79,6 +79,22 @@ Generate Sentence-BERT embeddings for molecular descriptions.
 Replaces BERT CLS embeddings with retrieval-optimized embeddings.
 """
 
+def enrich_description(graph):
+    desc = graph.description
+
+    # exemples (à adapter à ce que tu as)
+    num_nodes = graph.num_nodes
+    num_edges = graph.edge_index.size(1)
+
+    extra = (
+        f" [Molecule info] "
+        f"Atoms count: {num_nodes}. "
+        f"Bonds count: {num_edges}."
+    )
+
+    return desc + extra
+
+
 import pickle
 import pandas as pd
 import torch
@@ -116,7 +132,8 @@ for split in ["train", "validation"]:
     embeddings = []
 
     # Encode descriptions
-    descriptions = [g.description for g in graphs]
+    descriptions = [enrich_description(g) for g in graphs]
+
     ids = [g.id for g in graphs]
 
     print("Encoding descriptions...")
