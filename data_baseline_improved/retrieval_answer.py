@@ -13,10 +13,6 @@ from train_gcn import (
     MolGNN, DEVICE, TRAIN_GRAPHS, TEST_GRAPHS, TRAIN_EMB_CSV
 )
 
-def lexical_score(a, b):
-    set_a = set(a.lower().split())
-    set_b = set(b.lower().split())
-    return len(set_a & set_b)
 
 @torch.no_grad()
 def retrieve_descriptions(model, train_data, test_data, train_emb_dict, device, output_csv):
