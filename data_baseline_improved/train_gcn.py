@@ -12,6 +12,10 @@ from data_utils import (
     load_id2emb,
     PreprocessedGraphDataset, collate_fn
 )
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch_geometric.nn import GINEConv, global_add_pool
 
 
 # =========================================================
@@ -39,32 +43,56 @@ class MolGNN(nn.Module):
     def __init__(self, hidden=128, out_dim=256, layers=3):
         super().__init__()
 
-        emb_dim = hidden // 4  # dimension par feature
+        # =========================
+        # Node embeddings (9 features)
+        # =========================
+        node_emb_dim = hidden // 4
 
-        # 9 embeddings pour les 9 features atomiques
-        self.emb_atomic_num = nn.Embedding(119, emb_dim)
-        self.emb_chirality = nn.Embedding(9, emb_dim)
-        self.emb_degree = nn.Embedding(11, emb_dim)
-        self.emb_formal_charge = nn.Embedding(12, emb_dim)
-        self.emb_num_hs = nn.Embedding(9, emb_dim)
-        self.emb_num_radical = nn.Embedding(5, emb_dim)
-        self.emb_hybridization = nn.Embedding(8, emb_dim)
-        self.emb_aromatic = nn.Embedding(2, emb_dim)
-        self.emb_in_ring = nn.Embedding(2, emb_dim)
+        self.emb_atomic_num = nn.Embedding(119, node_emb_dim)
+        self.emb_chirality = nn.Embedding(9, node_emb_dim)
+        self.emb_degree = nn.Embedding(11, node_emb_dim)
+        self.emb_formal_charge = nn.Embedding(12, node_emb_dim)
+        self.emb_num_hs = nn.Embedding(9, node_emb_dim)
+        self.emb_num_radical = nn.Embedding(5, node_emb_dim)
+        self.emb_hybridization = nn.Embedding(8, node_emb_dim)
+        self.emb_aromatic = nn.Embedding(2, node_emb_dim)
+        self.emb_in_ring = nn.Embedding(2, node_emb_dim)
 
-        # Projection vers hidden
-        self.node_proj = nn.Linear(9 * emb_dim, hidden)
+        self.node_proj = nn.Linear(9 * node_emb_dim, hidden)
 
-        # GNN
+        # =========================
+        # Edge embeddings (3 features)
+        # =========================
+        edge_emb_dim = hidden // 4
+
+        self.emb_bond_type = nn.Embedding(22, edge_emb_dim)
+        self.emb_stereo = nn.Embedding(6, edge_emb_dim)
+        self.emb_conjugated = nn.Embedding(2, edge_emb_dim)
+
+        self.edge_proj = nn.Linear(3 * edge_emb_dim, hidden)
+
+        # =========================
+        # GNN layers (GINE)
+        # =========================
         self.convs = nn.ModuleList()
         for _ in range(layers):
-            self.convs.append(GCNConv(hidden, hidden))
+            mlp = nn.Sequential(
+                nn.Linear(hidden, hidden),
+                nn.ReLU(),
+                nn.Linear(hidden, hidden),
+            )
+            self.convs.append(GINEConv(mlp, edge_dim=hidden))
 
+        # =========================
+        # Graph projection
+        # =========================
         self.proj = nn.Linear(hidden, out_dim)
 
     def forward(self, batch):
-        x = batch.x  # (N, 9)
+        x = batch.x          # (N, 9)
+        edge_attr = batch.edge_attr  # (E, 3)
 
+        # ---- Node encoding ----
         h = torch.cat([
             self.emb_atomic_num(x[:, 0]),
             self.emb_chirality(x[:, 1]),
@@ -79,15 +107,26 @@ class MolGNN(nn.Module):
 
         h = self.node_proj(h)
 
+        # ---- Edge encoding ----
+        e = torch.cat([
+            self.emb_bond_type(edge_attr[:, 0]),
+            self.emb_stereo(edge_attr[:, 1]),
+            self.emb_conjugated(edge_attr[:, 2]),
+        ], dim=-1)
+
+        e = self.edge_proj(e)
+
+        # ---- Message passing ----
         for conv in self.convs:
-            h = conv(h, batch.edge_index)
+            h = conv(h, batch.edge_index, e)
             h = F.relu(h)
 
+        # ---- Graph pooling ----
         g = global_add_pool(h, batch.batch)
         g = self.proj(g)
         g = F.normalize(g, dim=-1)
-        return g
 
+        return g
 
 
 # =========================================================
