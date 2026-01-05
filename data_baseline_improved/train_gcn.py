@@ -16,6 +16,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GINEConv, global_add_pool
+from torch_geometric.nn import global_add_pool
 
 
 # =========================================================
@@ -31,8 +32,8 @@ VAL_EMB_CSV   = "/content/drive/MyDrive/ALTEGRAD/data/validation_embeddings.csv"
 
 # Training parameters
 BATCH_SIZE = 64
-EPOCHS = 15
-LR = 1e-3
+EPOCHS = 20
+LR = 5e-4
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
@@ -40,7 +41,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # MODEL: GNN to encode graphs (simple GCN, no edge features)
 # =========================================================
 class MolGNN(nn.Module):
-    def __init__(self, hidden=128, out_dim=256, layers=3):
+    def __init__(self, hidden=512, out_dim=512, layers=2):
         super().__init__()
 
         # =========================
@@ -70,6 +71,11 @@ class MolGNN(nn.Module):
         self.emb_conjugated = nn.Embedding(2, edge_emb_dim)
 
         self.edge_proj = nn.Linear(3 * edge_emb_dim, hidden)
+        self.att_mlp = nn.Sequential(
+                  nn.Linear(hidden, hidden // 2),
+                  nn.ReLU(),
+                  nn.Linear(hidden // 2, 1)
+              )
 
         # =========================
         # GNN layers (GINE)
@@ -122,7 +128,22 @@ class MolGNN(nn.Module):
             h = F.relu(h)
 
         # ---- Graph pooling ----
-        g = global_add_pool(h, batch.batch)
+        # Attention scores per node
+        att_scores = self.att_mlp(h)  # (N, 1)
+
+        # Softmax per graph
+        att_weights = torch.zeros_like(att_scores)
+        for graph_id in batch.batch.unique():
+            mask = (batch.batch == graph_id)
+            att_weights[mask] = torch.softmax(att_scores[mask], dim=0)
+
+        # Weighted sum
+        g = torch.zeros(
+            (batch.num_graphs, h.size(-1)),
+            device=h.device
+        )
+        g = g.index_add(0, batch.batch, h * att_weights)
+
         g = self.proj(g)
         g = F.normalize(g, dim=-1)
 
