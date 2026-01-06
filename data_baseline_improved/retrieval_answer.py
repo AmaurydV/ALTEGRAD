@@ -47,7 +47,7 @@ def structure_similarity(sig1, sig2):
 
 @torch.no_grad()
 def retrieve_descriptions(model, train_data, test_data, train_emb_dict, device, output_csv,
-                         top_k=10, alpha=0.15):
+                         top_k=5, alpha=0.1):
     """
     Retrieval + reranking:
       1) cosine similarity between test molecule embeddings and train text embeddings
