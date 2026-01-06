@@ -41,7 +41,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # MODEL: GNN to encode graphs (simple GCN, no edge features)
 # =========================================================
 class MolGNN(nn.Module):
-    def __init__(self, hidden=512, out_dim=512, layers=2):
+    def __init__(self, hidden=1024, out_dim=512, layers=2):
         super().__init__()
 
         # =========================
