@@ -33,7 +33,7 @@ VAL_EMB_CSV   = "/content/drive/MyDrive/ALTEGRAD/data/validation_embeddings.csv"
 
 # Training parameters
 BATCH_SIZE = 128
-EPOCHS = 30
+EPOCHS = 50
 LR = 5e-4
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
