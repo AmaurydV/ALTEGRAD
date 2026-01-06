@@ -352,6 +352,22 @@ def enrich_and_truncate(graph, max_desc_words=90):
     extra = " [Molecule info] " + " ".join(extras)
 
     return desc + extra
+def enrich_description(graph):
+    desc = graph.description
+
+    extras = []
+
+    if graph.num_nodes > 50:
+        extras.append("large molecule")
+    else:
+        extras.append("small molecule")
+
+    if graph.edge_index.size(1) / graph.num_nodes > 1.5:
+        extras.append("dense bonds")
+
+    extra = " [Molecule info] " + " ".join(extras)
+
+    return desc + extra
 
 
 # =========================================================
@@ -392,7 +408,7 @@ for split in ["train", "validation"]:
 
     print(f"Loaded {len(graphs)} graphs")
 
-    descriptions = [enrich_and_truncate(g) for g in graphs]
+    descriptions = [enrich_description(g) for g in graphs]
     ids = [g.id for g in graphs]
 
     print("Encoding with MiniLM...")
