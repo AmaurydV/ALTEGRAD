@@ -18,6 +18,7 @@ import torch.nn.functional as F
 from torch_geometric.nn import GINEConv, global_add_pool
 from torch_geometric.nn import global_add_pool
 
+from torch_geometric.utils import softmax
 
 # =========================================================
 # CONFIG
@@ -31,8 +32,8 @@ TRAIN_EMB_CSV = "/content/drive/MyDrive/ALTEGRAD/data/train_embeddings.csv"
 VAL_EMB_CSV   = "/content/drive/MyDrive/ALTEGRAD/data/validation_embeddings.csv"
 
 # Training parameters
-BATCH_SIZE = 64
-EPOCHS = 20
+BATCH_SIZE = 128
+EPOCHS = 30
 LR = 5e-4
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -41,7 +42,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # MODEL: GNN to encode graphs (simple GCN, no edge features)
 # =========================================================
 class MolGNN(nn.Module):
-    def __init__(self, hidden=1024, out_dim=512, layers=2):
+    def __init__(self, hidden=256, out_dim=256, layers=2):
         super().__init__()
 
         # =========================
@@ -126,16 +127,23 @@ class MolGNN(nn.Module):
         for conv in self.convs:
             h = conv(h, batch.edge_index, e)
             h = F.relu(h)
+            h = F.dropout(h, p=0.1, training=self.training)
+
 
         # ---- Graph pooling ----
         # Attention scores per node
-        att_scores = self.att_mlp(h)  # (N, 1)
+        att_scores = self.att_mlp(h).squeeze(-1)  # (N,)
 
-        # Softmax per graph
-        att_weights = torch.zeros_like(att_scores)
-        for graph_id in batch.batch.unique():
-            mask = (batch.batch == graph_id)
-            att_weights[mask] = torch.softmax(att_scores[mask], dim=0)
+        att_weights = softmax(
+            att_scores, batch.batch
+        ).unsqueeze(-1)
+
+        g = torch.zeros(
+            (batch.num_graphs, h.size(-1)),
+            device=h.device
+        )
+        g = g.index_add(0, batch.batch, h * att_weights)
+
 
         # Weighted sum
         g = torch.zeros(
@@ -165,7 +173,7 @@ def train_epoch(mol_enc, loader, optimizer, device):
         # mol_vec = F.normalize(mol_vec, dim=-1)
         # txt_vec = F.normalize(text_emb, dim=-1)
 
-        loss = contrastive_loss(mol_vec, text_emb, temperature=0.07)
+        loss = contrastive_loss(mol_vec, text_emb, temperature=0.1)
 
 
         optimizer.zero_grad()
