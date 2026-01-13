@@ -6,7 +6,7 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-
+from gptStynthesis import load_gpt2, gpt2_synthesize
 from data_utils import (
     load_id2emb, load_descriptions_from_graphs, PreprocessedGraphDataset, collate_fn
 )
@@ -14,6 +14,15 @@ from data_utils import (
 from train_gcn import (
     MolGNN, DEVICE, TRAIN_GRAPHS, TEST_GRAPHS, TRAIN_EMB_CSV
 )
+from transformers import GPT2Tokenizer, GPT2LMHeadModel
+
+def load_gpt2(device):
+    tokenizer = GPT2Tokenizer.from_pretrained("gpt2-medium")
+    model = GPT2LMHeadModel.from_pretrained("gpt2-medium").to(device)
+    model.eval()
+    return tokenizer, model
+
+
 
 # ================================
 # Reranking helpers (structure-aware)
@@ -45,36 +54,184 @@ def structure_similarity(sig1, sig2):
     return 1.0 / (1.0 + dist)
 
 
+# @torch.no_grad()
+# def retrieve_descriptions(model, train_data, test_data, train_emb_dict, device, output_csv,
+#                          top_k=5, alpha=0.1):
+#     """
+#     Retrieval + reranking:
+#       1) cosine similarity between test molecule embeddings and train text embeddings
+#       2) take top_k candidates
+#       3) rerank with: final_score = cosine + alpha * structure_similarity
+#     """
+#     # --- Load id->description for train ---
+#     train_id2desc = load_descriptions_from_graphs(train_data)
+
+#     # --- Train text embeddings matrix (ordered by train_ids) ---
+#     train_ids = list(train_emb_dict.keys())
+#     train_embs = torch.stack([train_emb_dict[id_] for id_ in train_ids]).to(device)
+#     train_embs = F.normalize(train_embs, dim=-1)
+#     print(f"Train set size: {len(train_ids)}")
+
+#     # --- Load test graphs ---
+#     test_ds = PreprocessedGraphDataset(test_data)
+#     test_dl = DataLoader(test_ds, batch_size=64, shuffle=False, collate_fn=collate_fn)
+#     print(f"Test set size: {len(test_ds)}")
+
+#     # --- Encode test molecules with the trained GNN ---
+#     test_mol_embs = []
+#     test_ids_ordered = []
+#     for graphs in test_dl:
+#         graphs = graphs.to(device)
+#         mol_emb = model(graphs)  # already normalized in your MolGNN forward
+#         test_mol_embs.append(mol_emb)
+
+#         bs = graphs.num_graphs
+#         start = len(test_ids_ordered)
+#         test_ids_ordered.extend(test_ds.ids[start:start + bs])
+
+#     test_mol_embs = torch.cat(test_mol_embs, dim=0)
+#     print(f"Encoded {test_mol_embs.size(0)} test molecules")
+
+#     # --- Cosine similarities: (N_test, N_train) ---
+#     similarities = test_mol_embs @ train_embs.t()
+
+#     # ================================
+#     # NEW: build structural signatures for reranking
+#     # ================================
+#     # signatures for test graphs in the same order as test_ds.ids
+#     test_sigs = [graph_signature(g) for g in test_ds.graphs]
+
+#     # signatures for train graphs aligned with train_ids order
+#     with open(train_data, "rb") as f:
+#         train_graphs = pickle.load(f)
+#     train_id2sig = {g.id: graph_signature(g) for g in train_graphs}
+#     train_sigs = [train_id2sig[tid] for tid in train_ids]
+
+#     # --- Rerank within top_k ---
+#     results = []
+#     for i, test_id in enumerate(test_ids_ordered):
+#         sims = similarities[i]  # (N_train,)
+#         topk = sims.topk(top_k)
+#         topk_idx = topk.indices.tolist()
+
+#         best_score = -1e18
+#         best_train_id = None
+
+#         for idx in topk_idx:
+#             base = sims[idx].item()  # cosine
+#             ssim = structure_similarity(test_sigs[i], train_sigs[idx])
+#             score = base + alpha * ssim
+
+#             if score > best_score:
+#                 best_score = score
+#                 best_train_id = train_ids[idx]
+
+#         retrieved_desc = train_id2desc[best_train_id]
+#         results.append({"ID": test_id, "description": retrieved_desc})
+
+#         if i < 5:
+#             print(f"\nTest ID {test_id}: selected train ID {best_train_id}")
+#             print(f"final_score={best_score:.4f} | top_k={top_k} | alpha={alpha}")
+#             print(f"Description: {retrieved_desc[:150]}...")
+
+#     results_df = pd.DataFrame(results)
+#     results_df.to_csv(output_csv, index=False)
+#     print(f"\n{'='*80}")
+#     print(f"Saved {len(results)} retrieved descriptions to: {output_csv}")
+
+#     return results_df
+
 @torch.no_grad()
-def retrieve_descriptions(model, train_data, test_data, train_emb_dict, device, output_csv,
-                         top_k=5, alpha=0.1):
+def retrieve_descriptions(
+    model,
+    train_data,
+    test_data,
+    train_emb_dict,
+    device,
+    output_csv,
+    top_k=5,
+    alpha=0.1,
+    max_gen_tokens=80
+):
     """
-    Retrieval + reranking:
-      1) cosine similarity between test molecule embeddings and train text embeddings
-      2) take top_k candidates
-      3) rerank with: final_score = cosine + alpha * structure_similarity
+    Hybrid retrieval + generation:
+      1) cosine similarity (mol embedding ↔ train text embeddings)
+      2) top_k candidates
+      3) rerank with structure similarity
+      4) GPT-2 synthesizes a new description from top_k retrieved ones
     """
-    # --- Load id->description for train ---
+
+    # ================================
+    # Load GPT-2
+    # ================================
+    from transformers import GPT2Tokenizer, GPT2LMHeadModel
+
+    tokenizer = GPT2Tokenizer.from_pretrained("gpt2-medium")
+    gpt2 = GPT2LMHeadModel.from_pretrained("gpt2-medium").to(device)
+    gpt2.eval()
+
+    # ================================
+    # Helpers
+    # ================================
+    def build_prompt(sig, retrieved_descs):
+        n, m, d = sig
+        prompt = (
+            "You are a chemistry expert.\n"
+            "Below are descriptions of molecules that are structurally similar.\n"
+            "Write a concise and accurate description of the target molecule.\n\n"
+            f"Target molecule properties:\n"
+            f"- Number of atoms: {n}\n"
+            f"- Number of bonds: {m}\n"
+            f"- Bond density: {d:.2f}\n\n"
+            "Similar molecule descriptions:\n"
+        )
+        for i, desc in enumerate(retrieved_descs):
+            prompt += f"{i+1}. {desc.strip()}\n"
+        prompt += "\nSynthesized description:"
+        return prompt
+
+    def generate_description(prompt):
+        inputs = tokenizer(prompt, return_tensors="pt").to(device)
+        outputs = gpt2.generate(
+            **inputs,
+            max_new_tokens=max_gen_tokens,
+            do_sample=True,
+            temperature=0.8,
+            top_p=0.95,
+            repetition_penalty=1.1,
+            pad_token_id=tokenizer.eos_token_id
+        )
+        text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        return text.split("Synthesized description:")[-1].strip()
+
+    # ================================
+    # Load train descriptions
+    # ================================
     train_id2desc = load_descriptions_from_graphs(train_data)
 
-    # --- Train text embeddings matrix (ordered by train_ids) ---
     train_ids = list(train_emb_dict.keys())
-    train_embs = torch.stack([train_emb_dict[id_] for id_ in train_ids]).to(device)
+    train_embs = torch.stack([train_emb_dict[i] for i in train_ids]).to(device)
     train_embs = F.normalize(train_embs, dim=-1)
+
     print(f"Train set size: {len(train_ids)}")
 
-    # --- Load test graphs ---
+    # ================================
+    # Load test graphs
+    # ================================
     test_ds = PreprocessedGraphDataset(test_data)
     test_dl = DataLoader(test_ds, batch_size=64, shuffle=False, collate_fn=collate_fn)
     print(f"Test set size: {len(test_ds)}")
 
-    # --- Encode test molecules with the trained GNN ---
+    # ================================
+    # Encode test molecules
+    # ================================
     test_mol_embs = []
     test_ids_ordered = []
+
     for graphs in test_dl:
         graphs = graphs.to(device)
-        mol_emb = model(graphs)  # already normalized in your MolGNN forward
-        test_mol_embs.append(mol_emb)
+        emb = model(graphs)
+        test_mol_embs.append(emb)
 
         bs = graphs.num_graphs
         start = len(test_ids_ordered)
@@ -83,52 +240,57 @@ def retrieve_descriptions(model, train_data, test_data, train_emb_dict, device, 
     test_mol_embs = torch.cat(test_mol_embs, dim=0)
     print(f"Encoded {test_mol_embs.size(0)} test molecules")
 
-    # --- Cosine similarities: (N_test, N_train) ---
     similarities = test_mol_embs @ train_embs.t()
 
     # ================================
-    # NEW: build structural signatures for reranking
+    # Structural signatures
     # ================================
-    # signatures for test graphs in the same order as test_ds.ids
     test_sigs = [graph_signature(g) for g in test_ds.graphs]
 
-    # signatures for train graphs aligned with train_ids order
     with open(train_data, "rb") as f:
         train_graphs = pickle.load(f)
     train_id2sig = {g.id: graph_signature(g) for g in train_graphs}
-    train_sigs = [train_id2sig[tid] for tid in train_ids]
+    train_sigs = [train_id2sig[i] for i in train_ids]
 
-    # --- Rerank within top_k ---
+    # ================================
+    # Retrieval + GPT-2 synthesis
+    # ================================
     results = []
+
     for i, test_id in enumerate(test_ids_ordered):
-        sims = similarities[i]  # (N_train,)
-        topk = sims.topk(top_k)
-        topk_idx = topk.indices.tolist()
+        sims = similarities[i]
+        topk = sims.topk(top_k).indices.tolist()
 
-        best_score = -1e18
-        best_train_id = None
-
-        for idx in topk_idx:
-            base = sims[idx].item()  # cosine
+        scored = []
+        for idx in topk:
+            base = sims[idx].item()
             ssim = structure_similarity(test_sigs[i], train_sigs[idx])
-            score = base + alpha * ssim
+            scored.append((base + alpha * ssim, idx))
 
-            if score > best_score:
-                best_score = score
-                best_train_id = train_ids[idx]
+        scored.sort(reverse=True)
+        selected_idx = [idx for _, idx in scored]
 
-        retrieved_desc = train_id2desc[best_train_id]
-        results.append({"ID": test_id, "description": retrieved_desc})
+        retrieved_descs = [
+            train_id2desc[train_ids[idx]] for idx in selected_idx
+        ]
 
-        if i < 5:
-            print(f"\nTest ID {test_id}: selected train ID {best_train_id}")
-            print(f"final_score={best_score:.4f} | top_k={top_k} | alpha={alpha}")
-            print(f"Description: {retrieved_desc[:150]}...")
+        prompt = build_prompt(test_sigs[i], retrieved_descs)
+        synthesized = generate_description(prompt)
+
+        results.append({
+            "ID": test_id,
+            "description": synthesized
+        })
+
+        if i < 3:
+            print("\n--- GPT-2 GENERATED ---")
+            print(synthesized)
 
     results_df = pd.DataFrame(results)
     results_df.to_csv(output_csv, index=False)
+
     print(f"\n{'='*80}")
-    print(f"Saved {len(results)} retrieved descriptions to: {output_csv}")
+    print(f"Saved {len(results)} synthesized descriptions to: {output_csv}")
 
     return results_df
 
