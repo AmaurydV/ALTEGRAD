@@ -137,7 +137,7 @@ def main():
     print(f"Device: {DEVICE}")
 
     output_csv = "/content/drive/MyDrive/ALTEGRAD/test_retrieved_descriptions.csv"
-    model_path = "/content/drive/MyDrive/ALTEGRAD/model_checkpoint.pt"
+    model_path = f"/content/drive/MyDrive/ALTEGRAD/mol_gpt2_prefix_epoch=1.pt"
 
     if not os.path.exists(model_path):
         print(f"Error: Model checkpoint '{model_path}' not found.")
